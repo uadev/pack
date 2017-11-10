@@ -5,8 +5,9 @@ use Error;
 use package::Package;
 use chan;
 use echo;
-use termion::color;
+use termion::{terminal_size, color};
 use utils::Spinner;
+use std::process;
 
 pub struct TaskManager {
     packs: Vec<Package>,
@@ -26,7 +27,8 @@ impl TaskManager {
     }
 
     fn update<F>(pack: &Package, line: u16, func: F)
-        where F: Fn(&Package) -> Result<()>
+    where
+        F: Fn(&Package) -> Result<()>,
     {
         let msg = format!(" [{}]", &pack.name);
         let pos = msg.len() as u16;
@@ -53,13 +55,6 @@ impl TaskManager {
                     failed = true;
                 }
             }
-            if pack.path().join("doc").is_dir() {
-                echo::inline_message(line, 5 + pos, "building doc");
-                if let Err(_) = pack.try_build_help() {
-                    print_err!("Warning: fail to build doc");
-                    failed = true;
-                }
-            }
 
             spinner.stop();
             if !failed {
@@ -70,38 +65,69 @@ impl TaskManager {
     }
 
     pub fn run<F>(self, func: F)
-        where F: Fn(&Package) -> Result<()> + Send + 'static + Copy
+    where
+        F: Fn(&Package) -> Result<()> + Send + 'static + Copy,
     {
         if self.packs.is_empty() {
             die!("No plugins to syncing");
         }
 
-        let (tx, rx) = chan::sync(0);
+        let y = match terminal_size() {
+            Err(e) => die!("Fail to get terminal size. {}", e),
+            Ok((_, y)) => y,
+        };
+
+        if y <= 2 {
+            die!("Terminal size too small.");
+        }
+
         let wg = chan::WaitGroup::new();
+        let jobs = chan::WaitGroup::new();
+        let (tx, rx) = chan::sync(0);
 
         for _ in 0..self.thread_num {
             wg.add(1);
             let rx = rx.clone();
             let wg = wg.clone();
-            thread::spawn(move || {
-                while let Some(Some((index, pack))) = rx.recv() {
-                    Self::update(&pack, index, func);
-                }
-                wg.done();
+            let jobs = jobs.clone();
+            thread::spawn(move || while let Some(Some((index, pack))) = rx.recv() {
+                jobs.add(1);
+                Self::update(&pack, index, func);
+                jobs.done();
             });
+            wg.done();
         }
 
-        let offset = self.packs.len() as u16 + 2;
-        for _ in 0..offset {
+        if !self.packs.is_empty() {
             print!("\n");
         }
-        for (i, pack) in self.packs.into_iter().enumerate() {
-            tx.send(Some((offset - i as u16 - 1, pack)));
+        for chunk in self.packs.chunks(y as usize - 2) {
+            let offset = chunk.len();
+            for _ in 0..offset {
+                print!("\n");
+            }
+
+            for (j, pack) in chunk.into_iter().enumerate() {
+                let o = offset - j;
+                tx.send(Some((o as u16, pack.clone())));
+            }
+            jobs.wait();
+        }
+        if !self.packs.is_empty() {
+            print!("\n");
         }
 
         for _ in 0..self.thread_num {
             tx.send(None);
         }
         wg.wait();
+
+        process::Command::new("vim")
+            .arg("--not-a-term")
+            .arg("-c")
+            .arg("silent! helptags ALL")
+            .stdout(process::Stdio::null())
+            .spawn()
+            .expect("Something went wrong!");
     }
 }

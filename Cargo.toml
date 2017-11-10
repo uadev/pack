@@ -1,6 +1,6 @@
 [package]
 name = "pack"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["maralla <maralla.ai@gmail.com>"]
 
 [dependencies]
@@ -8,7 +8,7 @@ lazy_static = "0.1.*"
 docopt = "0.7"
 rustc-serialize = "0.3"
 yaml-rust = "0.3.5"
-git2 = "0.6"
+git2 = "0.6.7"
 walkdir = "1"
 termion = "1.0"
 num_cpus = "1.0"
